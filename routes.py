@@ -8,12 +8,33 @@ Params are validated by the same marshmallow schemas the hosted API uses
 tiktok.com link."""
 import json
 
-from bottle import request, response, route
+from bottle import hook, request, response, route
 
+import config
 import follow_ups
 from schema_fields import load_query
 from scraper_errors import BadRequest, Blocked, NotFound, UpstreamError
 from tiktok import ads, discovery, live, schemas, search, users, videos
+
+
+@hook("before_request")
+def add_cors_headers():
+    allowed_origins = [origin.strip() for origin in config.CORS_ORIGINS.split(",") if origin.strip()]
+    origin = request.get_header("Origin")
+    if "*" in allowed_origins:
+        response.set_header("Access-Control-Allow-Origin", "*")
+    elif origin and origin in allowed_origins:
+        response.set_header("Access-Control-Allow-Origin", origin)
+        response.set_header("Vary", "Origin")
+    response.set_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+    response.set_header("Access-Control-Allow-Headers", "Origin, Accept, Content-Encoding, Content-Type, Authorization")
+
+
+@route("/<path:path>", method="OPTIONS")
+@route("/", method="OPTIONS")
+def cors_preflight(path=None):
+    response.status = 204
+    return ""
 
 
 def json_response(data, status=200):

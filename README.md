@@ -144,6 +144,8 @@ npm install
 npm run dev
 ```
 
+For a custom API host, create `frontend/.env` from `frontend/.env.example` and set `VITE_API_BASE_URL`. If it is unset, the frontend uses `/api` and the Vite development proxy.
+
 Open the URL printed by Vite (usually `http://localhost:5173`). The development server proxies API requests to `http://localhost:8000`. The hashtag search and user API forms include dropdowns populated with saved hashtag and profile follow-ups from SQLite. Save videos from hashtag search or User API results to revisit them in Monitor.
 
 ## 📌 Follow-up API
