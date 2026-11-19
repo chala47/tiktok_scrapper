@@ -112,12 +112,16 @@ def _fetch_window(schedule, start, end):
     return list(videos.values())
 
 
-def _rank_videos(videos):
+def _rank_videos(videos, min_likes=0, max_videos=2):
     eligible = []
     for video in videos:
         stats = video.get("stats") or {}
         like_count = stats.get("like_count")
-        if isinstance(like_count, bool) or not isinstance(like_count, int) or like_count < 0:
+        if (
+            isinstance(like_count, bool) or
+            not isinstance(like_count, int) or
+            like_count < min_likes
+        ):
             continue
         author = video.get("author")
         eligible.append({
@@ -140,7 +144,7 @@ def _rank_videos(videos):
             video["video_id"],
         )
     )
-    return eligible[:2]
+    return eligible[:max_videos]
 
 
 def execute_schedule(schedule):
@@ -150,7 +154,7 @@ def execute_schedule(schedule):
         raise ValueError("scheduled fetch window is invalid")
 
     candidates = _fetch_window(schedule, start, end)
-    winners = _rank_videos(candidates)
+    winners = _rank_videos(candidates, schedule["min_likes"], schedule["max_videos"])
     return follow_ups.finish_fetch_run(
         schedule["run_id"],
         schedule["id"],

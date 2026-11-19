@@ -44,6 +44,12 @@ def test_schedule_create_pause_resume_and_delete(database):
     "patch",
     [
         {"weekday": 7},
+        {"frequency": "monthly"},
+        {"min_likes": -1},
+        {"min_likes": True},
+        {"max_videos": 0},
+        {"max_videos": 101},
+        {"max_videos": True},
         {"run_time": "9:30"},
         {"timezone": "not/a-timezone"},
         {"start_date": "2026-02-30"},
@@ -105,6 +111,32 @@ def test_due_run_stores_top_video_results(database):
     ]
 
 
+def test_daily_schedule_advances_to_the_next_day(database):
+    schedule = follow_ups.create_fetch_schedule({
+        **schedule_payload(),
+        "frequency": "daily",
+        "min_likes": 250,
+        "max_videos": 3,
+    })
+    assert schedule["frequency"] == "daily"
+    assert schedule["min_likes"] == 250
+    assert schedule["max_videos"] == 3
+
+    with follow_ups._database() as connection:
+        connection.execute(
+            "UPDATE fetch_schedules SET next_run_at = ? WHERE id = ?",
+            ("2026-01-06T09:30:00+00:00", schedule["id"]),
+        )
+
+    claimed = follow_ups.claim_due_fetch_schedules(
+        datetime(2026, 1, 7, 10, 0, tzinfo=timezone.utc)
+    )
+
+    assert len(claimed) == 1
+    refreshed = follow_ups.list_fetch_schedules()[0]
+    assert refreshed["next_run_at"] == "2026-01-08T09:30:00+00:00"
+
+
 def test_fetch_window_pages_filters_exact_window_and_ranks_likes(monkeypatch):
     pages = {
         None: {
@@ -143,6 +175,12 @@ def test_fetch_window_pages_filters_exact_window_and_ranks_likes(monkeypatch):
     assert calls[0][1] == {"start_date": "2026-01-01", "end_date": "2026-01-05"}
     assert {video["id"] for video in candidates} == {"one", "two", "three"}
     assert [video["video_id"] for video in winners] == ["three", "two"]
+    assert [video["video_id"] for video in scheduled_fetcher._rank_videos(candidates, 250)] == [
+        "three",
+    ]
+    assert [video["video_id"] for video in scheduled_fetcher._rank_videos(candidates, 0, 1)] == [
+        "three",
+    ]
 
 
 def test_dns_errors_retry_every_interval_until_a_response(monkeypatch):

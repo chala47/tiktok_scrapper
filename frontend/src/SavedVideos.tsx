@@ -122,14 +122,22 @@ export default function SavedVideos() {
                   <p className="follow-up-due">Video ID {video.video_id}</p>
                 </div>
               </div>
-              <button
-                className="small-action delete-action"
-                type="button"
-                disabled={busyVideoId === video.video_id}
-                onClick={() => void removeVideo(video.video_id)}
-              >
-                {busyVideoId === video.video_id ? "Removing…" : "Remove"}
-              </button>
+              <div className="follow-up-card-actions">
+                <a
+                  className="download-button"
+                  href={`${API_BASE}/videos/download?video=${encodeURIComponent(video.video_id)}`}
+                >
+                  Download
+                </a>
+                <button
+                  className="small-action delete-action"
+                  type="button"
+                  disabled={busyVideoId === video.video_id}
+                  onClick={() => void removeVideo(video.video_id)}
+                >
+                  {busyVideoId === video.video_id ? "Removing…" : "Remove"}
+                </button>
+              </div>
             </article>
           ))}
         </div>

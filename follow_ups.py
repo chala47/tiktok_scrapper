@@ -19,7 +19,9 @@ _SAVED_VIDEO_FIELDS = {
 }
 _FETCH_SCHEDULE_FIELDS = {
     "entity_type", "target", "weekday", "run_time", "timezone", "start_date",
+    "frequency", "min_likes", "max_videos",
 }
+MAX_SCHEDULED_VIDEOS = 100
 
 
 @contextmanager
@@ -78,6 +80,9 @@ def _database():
                     entity_type TEXT NOT NULL CHECK (entity_type IN ('hashtag', 'profile')),
                     target TEXT NOT NULL,
                     weekday INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
+                    frequency TEXT NOT NULL DEFAULT 'weekly' CHECK (frequency IN ('daily', 'weekly')),
+                    min_likes INTEGER NOT NULL DEFAULT 0 CHECK (min_likes >= 0),
+                    max_videos INTEGER NOT NULL DEFAULT 2 CHECK (max_videos BETWEEN 1 AND 100),
                     run_time TEXT NOT NULL,
                     timezone TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
@@ -89,6 +94,22 @@ def _database():
                 )
                 """
             )
+            schedule_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(fetch_schedules)")
+            }
+            if "frequency" not in schedule_columns:
+                connection.execute(
+                    "ALTER TABLE fetch_schedules ADD COLUMN frequency TEXT NOT NULL DEFAULT 'weekly'"
+                )
+            if "min_likes" not in schedule_columns:
+                connection.execute(
+                    "ALTER TABLE fetch_schedules ADD COLUMN min_likes INTEGER NOT NULL DEFAULT 0"
+                )
+            if "max_videos" not in schedule_columns:
+                connection.execute(
+                    "ALTER TABLE fetch_schedules ADD COLUMN max_videos INTEGER NOT NULL DEFAULT 2"
+                )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS fetch_runs (
@@ -175,6 +196,28 @@ def _schedule_weekday(value):
     return value
 
 
+def _schedule_frequency(value):
+    if not isinstance(value, str) or value not in {"daily", "weekly"}:
+        raise ValueError("frequency must be 'daily' or 'weekly'")
+    return value
+
+
+def _schedule_min_likes(value):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("min_likes must be a non-negative integer")
+    return value
+
+
+def _schedule_max_videos(value):
+    if (
+        isinstance(value, bool) or
+        not isinstance(value, int) or
+        not 1 <= value <= MAX_SCHEDULED_VIDEOS
+    ):
+        raise ValueError(f"max_videos must be an integer from 1 to {MAX_SCHEDULED_VIDEOS}")
+    return value
+
+
 def _schedule_start(value, zone):
     if not isinstance(value, str):
         raise ValueError("start_date must be a date in YYYY-MM-DD format")
@@ -194,14 +237,14 @@ def _parse_schedule_start(value):
     return parsed.astimezone(timezone.utc)
 
 
-def _next_weekly_run(after, weekday, run_time, zone, not_before=None):
+def _next_schedule_run(after, frequency, weekday, run_time, zone, not_before=None):
     not_before = not_before or after
     local_after = after.astimezone(zone)
     local_not_before = not_before.astimezone(zone)
     first_day = max(local_after.date(), local_not_before.date())
     for offset in range(15):
         candidate_date = first_day + timedelta(days=offset)
-        if candidate_date.weekday() != weekday:
+        if frequency == "weekly" and candidate_date.weekday() != weekday:
             continue
         candidate = datetime.combine(candidate_date, run_time, tzinfo=zone)
         candidate_utc = candidate.astimezone(timezone.utc)
@@ -298,7 +341,8 @@ def create_fetch_schedule(data):
     if not isinstance(data, dict):
         raise ValueError("JSON request body must be an object")
     unknown = set(data) - _FETCH_SCHEDULE_FIELDS
-    missing = _FETCH_SCHEDULE_FIELDS - set(data)
+    required = _FETCH_SCHEDULE_FIELDS - {"frequency", "min_likes", "max_videos"}
+    missing = required - set(data)
     if unknown:
         raise ValueError(f"unsupported fields: {', '.join(sorted(unknown))}")
     if missing:
@@ -307,23 +351,27 @@ def create_fetch_schedule(data):
     entity_type = _entity_type(data["entity_type"])
     target = _target(data["target"], entity_type)
     weekday = _schedule_weekday(data["weekday"])
+    frequency = _schedule_frequency(data.get("frequency", "weekly"))
+    min_likes = _schedule_min_likes(data.get("min_likes", 0))
+    max_videos = _schedule_max_videos(data.get("max_videos", 2))
     run_time = _schedule_time(data["run_time"])
     timezone_name, zone = _timezone(data["timezone"])
     window_start = _schedule_start(data["start_date"], zone)
     now = datetime.now(timezone.utc)
-    next_run = _next_weekly_run(now, weekday, run_time, zone, window_start)
+    next_run = _next_schedule_run(now, frequency, weekday, run_time, zone, window_start)
     timestamp = _timestamp()
 
     with _database() as connection:
         cursor = connection.execute(
             """
             INSERT INTO fetch_schedules
-                (entity_type, target, weekday, run_time, timezone, enabled,
-                 window_start_at, next_run_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                (entity_type, target, weekday, frequency, min_likes, max_videos, run_time,
+                 timezone, enabled, window_start_at, next_run_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             """,
             (
-                entity_type, target, weekday, run_time.strftime("%H:%M"),
+                entity_type, target, weekday, frequency, min_likes, max_videos,
+                run_time.strftime("%H:%M"),
                 timezone_name, _utc_iso(window_start), next_run, timestamp, timestamp,
             ),
         )
@@ -361,8 +409,9 @@ def update_fetch_schedule(schedule_id, data):
         now = datetime.now(timezone.utc)
         next_run = row["next_run_at"]
         if enabled:
-            next_run = _next_weekly_run(
+            next_run = _next_schedule_run(
                 now,
+                row["frequency"],
                 row["weekday"],
                 _schedule_time(row["run_time"]),
                 _timezone(row["timezone"])[1],
@@ -416,8 +465,9 @@ def claim_due_fetch_schedules(now=None):
                 """,
                 (row["id"], scheduled_for, window_start, now_iso, now_iso),
             )
-            next_run = _next_weekly_run(
+            next_run = _next_schedule_run(
                 now,
+                row["frequency"],
                 row["weekday"],
                 _schedule_time(row["run_time"]),
                 _timezone(row["timezone"])[1],

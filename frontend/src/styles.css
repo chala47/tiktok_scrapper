@@ -138,9 +138,12 @@ footer { padding: 38px 0 24px; color: #9a9e97; text-align: center; font-size: 11
 .follow-up-form-grid { display: grid; grid-template-columns: minmax(130px, .7fr) minmax(180px, 1.4fr) minmax(150px, 1fr) auto; align-items: end; gap: 14px; }
 .follow-up-form-grid input, .follow-up-form-grid select, .follow-up-edit-form input { width: 100%; height: 42px; padding: 0 11px; border: 1px solid #e1e3dc; border-radius: 7px; color: #292d28; background: white; outline: none; }
 .follow-up-form-grid input:focus, .follow-up-form-grid select:focus, .follow-up-edit-form input:focus { border-color: #87a75d; box-shadow: 0 0 0 3px #87a75d20; }
-.monitor-schedule-grid { display: grid; grid-template-columns: minmax(110px, .7fr) minmax(150px, 1.2fr) repeat(3, minmax(120px, 1fr)) auto; align-items: end; gap: 12px; }
+.monitor-schedule-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: end; gap: 12px; }
 .monitor-schedule-grid input, .monitor-schedule-grid select { width: 100%; height: 42px; padding: 0 10px; border: 1px solid #e1e3dc; border-radius: 7px; color: #292d28; background: white; outline: none; font-size: 12px; }
 .monitor-schedule-grid input:focus, .monitor-schedule-grid select:focus { border-color: #87a75d; box-shadow: 0 0 0 3px #87a75d20; }
+.monitor-target-control { display: flex; min-width: 0; gap: 7px; }
+.monitor-target-control > .saved-select-compact { flex: 0 1 45%; min-width: 0; }
+.monitor-target-control > input { flex: 1 1 0; width: 0; min-width: 0; }
 .monitor-create-button { min-width: 154px; }
 .monitor-heading-actions { display: flex; align-items: center; gap: 12px; }
 .monitor-picks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 15px; }

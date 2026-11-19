@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
+import SavedFollowUpSelect from "./SavedFollowUpSelect";
 import SavedVideos from "./SavedVideos";
 
 type EntityType = "hashtag" | "profile";
+type ScheduleFrequency = "daily" | "weekly";
 type ScheduledFetch = {
   id: number;
   entity_type: EntityType;
   target: string;
   weekday: number;
+  frequency: ScheduleFrequency;
+  min_likes: number;
+  max_videos: number;
   run_time: string;
   timezone: string;
   enabled: boolean;
@@ -46,6 +51,9 @@ type ScheduleForm = {
   entity_type: EntityType;
   target: string;
   weekday: string;
+  frequency: ScheduleFrequency;
+  min_likes: string;
+  max_videos: string;
   run_time: string;
   start_date: string;
 };
@@ -69,6 +77,9 @@ function isSchedule(value: unknown): value is ScheduledFetch {
     (value.entity_type === "hashtag" || value.entity_type === "profile") &&
     typeof value.target === "string" &&
     Number.isInteger(value.weekday) &&
+    (value.frequency === "daily" || value.frequency === "weekly") &&
+    Number.isInteger(value.min_likes) &&
+    Number.isInteger(value.max_videos) &&
     typeof value.run_time === "string" &&
     typeof value.timezone === "string" &&
     typeof value.enabled === "boolean" &&
@@ -147,6 +158,9 @@ export default function Monitor() {
     entity_type: "hashtag",
     target: "",
     weekday: String((new Date().getDay() + 6) % 7),
+    frequency: "weekly",
+    min_likes: "0",
+    max_videos: "2",
     run_time: "09:00",
     start_date: todayLocal(),
   });
@@ -201,13 +215,15 @@ export default function Monitor() {
           ...form,
           target,
           weekday: Number(form.weekday),
+          min_likes: Number(form.min_likes),
+          max_videos: Number(form.max_videos),
           timezone: TIMEZONE,
         }),
       });
       if (!isSchedule(created)) throw new Error("The API returned an unexpected schedule response.");
       setSchedules((current) => [created, ...current]);
       setForm((current) => ({ ...current, target: "" }));
-      setNotice("Weekly schedule created.");
+      setNotice(`${form.frequency === "daily" ? "Daily" : "Weekly"} schedule created.`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not create the schedule.");
     } finally {
@@ -260,11 +276,11 @@ export default function Monitor() {
         <p className="eyebrow">AUTOMATED VIDEO PICKS</p>
         <h1>Monitor</h1>
         <p className="intro-copy">
-          Fetch recent hashtag or profile videos weekly and keep the two most-liked picks from each run.
+          Fetch recent hashtag or profile videos daily or weekly and keep your most-liked picks from each run.
         </p>
       </section>
 
-      <section className="search-panel monitor-schedule-panel" aria-label="Create a weekly fetch schedule">
+      <section className="search-panel monitor-schedule-panel" aria-label="Create a fetch schedule">
         <div className="follow-up-panel-heading">
           <div>
             <p className="eyebrow">NEW SCHEDULE</p>
@@ -289,28 +305,71 @@ export default function Monitor() {
             </label>
             <label className="field">
               <span>{form.entity_type === "hashtag" ? "Hashtag" : "Username"}</span>
-              <input
-                value={form.target}
-                onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
-                placeholder={form.entity_type === "hashtag" ? "dance" : "creator"}
-                required
-              />
+              <div className="monitor-target-control">
+                <SavedFollowUpSelect
+                  entityType={form.entity_type}
+                  compact
+                  onSelect={(target) => setForm((current) => ({ ...current, target }))}
+                />
+                <input
+                  value={form.target}
+                  onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
+                  placeholder={form.entity_type === "hashtag" ? "dance" : "creator"}
+                  required
+                />
+              </div>
             </label>
             <label className="field">
-              <span>Run every week on</span>
+              <span>Repeat</span>
+              <select
+                value={form.frequency}
+                onChange={(event) => setForm((current) => ({
+                  ...current,
+                  frequency: event.target.value as ScheduleFrequency,
+                }))}
+              >
+                <option value="daily">Every day</option>
+                <option value="weekly">Every week</option>
+              </select>
+            </label>
+            {form.frequency === "weekly" && <label className="field">
+              <span>Day of week</span>
               <select
                 value={form.weekday}
                 onChange={(event) => setForm((current) => ({ ...current, weekday: event.target.value }))}
               >
                 {WEEKDAYS.map((day, index) => <option value={index} key={day}>{day}</option>)}
               </select>
-            </label>
+            </label>}
             <label className="field">
               <span>At ({TIMEZONE})</span>
               <input
                 type="time"
                 value={form.run_time}
                 onChange={(event) => setForm((current) => ({ ...current, run_time: event.target.value }))}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Minimum likes</span>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.min_likes}
+                onChange={(event) => setForm((current) => ({ ...current, min_likes: event.target.value }))}
+                required
+              />
+            </label>
+            <label className="field">
+              <span>Videos to save per run</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                step="1"
+                value={form.max_videos}
+                onChange={(event) => setForm((current) => ({ ...current, max_videos: event.target.value }))}
                 required
               />
             </label>
@@ -328,7 +387,7 @@ export default function Monitor() {
             </button>
           </div>
           <p className="endpoint-description">
-            Each run scans from the selected start date, then from the previous successful run, and saves up to two videos.
+            Each run scans from the selected start date, then from the previous successful run, and saves up to the selected number of videos.
           </p>
         </form>
       </section>
@@ -340,7 +399,7 @@ export default function Monitor() {
         <div className="results-heading follow-up-results-heading">
           <div>
             <p className="eyebrow">YOUR AUTOMATIONS</p>
-            <h2>Weekly schedules</h2>
+            <h2>Schedules</h2>
           </div>
           <div className="monitor-heading-actions">
             <span className="result-count">{schedules.length} {schedules.length === 1 ? "schedule" : "schedules"}</span>
@@ -361,8 +420,12 @@ export default function Monitor() {
                   </span>
                   <h3>{schedule.entity_type === "hashtag" ? "#" : "@"}{schedule.target}</h3>
                   <p className="follow-up-note">
-                    Every {WEEKDAYS[schedule.weekday]} at {schedule.run_time} ({schedule.timezone})
+                    {schedule.frequency === "daily"
+                      ? `Every day at ${schedule.run_time}`
+                      : `Every ${WEEKDAYS[schedule.weekday]} at ${schedule.run_time}`} ({schedule.timezone})
                   </p>
+                  <p className="follow-up-note">Minimum likes: {formatLikes(schedule.min_likes)}</p>
+                  <p className="follow-up-note">Save up to {schedule.max_videos} {schedule.max_videos === 1 ? "video" : "videos"} per run</p>
                   <p className="follow-up-due">
                     Next: {localDateTime(schedule.next_run_at)}
                     {schedule.last_success_at && <> · Last success: {localDateTime(schedule.last_success_at)}</>}
@@ -392,7 +455,7 @@ export default function Monitor() {
         ) : (
           <div className="follow-up-empty">
             <strong>No schedules yet</strong>
-            <span>Add a hashtag or profile above to start collecting weekly video picks.</span>
+            <span>Add a hashtag or profile above to start collecting video picks.</span>
           </div>
         )}
       </section>
