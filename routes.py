@@ -233,12 +233,19 @@ def register_fetch_schedules():
         except (ValueError, TypeError) as error:
             return json_response({"error": str(error)}, 400)
 
+    def run_video_delete_handler(run_id, video_id):
+        if not follow_ups.delete_monitored_video(run_id, video_id):
+            return json_response({"error": "scheduled pick not found"}, 404)
+        response.status = 204
+        return ""
+
     handlers = [
         ("/monitor/schedules", "monitor_schedules_list", "GET", list_handler),
         ("/monitor/schedules", "monitor_schedules_create", "POST", create_handler),
         ("/monitor/schedules/<schedule_id:int>", "monitor_schedule_update", "PATCH", update_handler),
         ("/monitor/schedules/<schedule_id:int>", "monitor_schedule_delete", "DELETE", delete_handler),
         ("/monitor/runs", "monitor_runs_list", "GET", runs_handler),
+        ("/monitor/runs/<run_id:int>/videos/<video_id>", "monitor_run_video_delete", "DELETE", run_video_delete_handler),
     ]
     for path, name, method, handler in handlers:
         handler.__name__ = name
@@ -332,5 +339,6 @@ def health():
             "PATCH /monitor/schedules/{id}",
             "DELETE /monitor/schedules/{id}",
             "GET /monitor/runs",
+            "DELETE /monitor/runs/{run_id}/videos/{video_id}",
         ],
     })

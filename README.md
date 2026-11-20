@@ -179,6 +179,7 @@ The scheduler runs in the same process as `python run.py`; that process must rem
 - `PATCH /monitor/schedules/{id}` pauses or resumes a schedule with `{"enabled": false}` or `{"enabled": true}`.
 - `DELETE /monitor/schedules/{id}` removes a schedule and its run history.
 - `GET /monitor/runs` returns recent run status and saved video picks; `limit` can be set from 1 to 500.
+- `DELETE /monitor/runs/{run_id}/videos/{video_id}` deletes one pick from a run and updates its saved count.
 
 The same routes are also available under `/tiktok/monitor`.
 

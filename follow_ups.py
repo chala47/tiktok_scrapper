@@ -596,6 +596,27 @@ def list_fetch_runs(limit=100):
     return run_records
 
 
+def delete_monitored_video(run_id, video_id):
+    with _database() as connection:
+        cursor = connection.execute(
+            "DELETE FROM monitored_videos WHERE run_id = ? AND video_id = ?",
+            (run_id, video_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+        connection.execute(
+            """
+            UPDATE fetch_runs
+            SET saved_count = (
+                SELECT COUNT(*) FROM monitored_videos WHERE run_id = ?
+            )
+            WHERE id = ?
+            """,
+            (run_id, run_id),
+        )
+    return True
+
+
 def get_follow_up(follow_up_id):
     with _database() as connection:
         row = connection.execute(

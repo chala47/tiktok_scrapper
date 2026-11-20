@@ -109,6 +109,11 @@ def test_due_run_stores_top_video_results(database):
         "video-1",
         "video-2",
     ]
+    assert follow_ups.delete_monitored_video(claimed[0]["run_id"], "video-1")
+    remaining_run = follow_ups.list_fetch_runs()[0]
+    assert remaining_run["saved_count"] == 1
+    assert [video["video_id"] for video in remaining_run["videos"]] == ["video-2"]
+    assert not follow_ups.delete_monitored_video(claimed[0]["run_id"], "video-1")
 
 
 def test_daily_schedule_advances_to_the_next_day(database):

@@ -21,7 +21,7 @@ here if you need to.
 """
 import os
 
-PORT = int(os.environ.get("PORT", "8000"))
+PORT = int(os.environ.get("PORT", "9000"))
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
 
 # Retry policy for transport errors and blocks (every request).

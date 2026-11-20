@@ -146,9 +146,11 @@ footer { padding: 38px 0 24px; color: #9a9e97; text-align: center; font-size: 11
 .monitor-target-control > input { flex: 1 1 0; width: 0; min-width: 0; }
 .monitor-create-button { min-width: 154px; }
 .monitor-heading-actions { display: flex; align-items: center; gap: 12px; }
-.monitor-picks { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; margin-top: 15px; }
-.monitor-pick { display: flex; min-width: 0; align-items: center; gap: 12px; padding: 10px; border: 1px solid #eceee8; border-radius: 7px; background: #fcfcfa; }
+.monitor-picks { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 15px; }
+.monitor-pick { display: grid; min-width: 0; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px; border: 1px solid #eceee8; border-radius: 7px; background: #fcfcfa; }
 .monitor-pick .video-cover { width: 42px; height: 54px; }
+.monitor-pick > .follow-up-card-main { min-width: 0; }
+.monitor-pick .follow-up-card-actions { width: auto; flex-wrap: nowrap; }
 .monitor-pick h3 { margin: 0 0 5px; font-size: 13px; letter-spacing: 0; }
 .monitor-pick h3 a { color: inherit; text-decoration: none; }
 .monitor-pick h3 a:hover { color: #617c3d; text-decoration: underline; }
@@ -246,6 +248,8 @@ footer { padding: 38px 0 24px; color: #9a9e97; text-align: center; font-size: 11
   .follow-up-card { align-items: flex-start; flex-direction: column; }
   .saved-video-main { width: 100%; align-items: flex-start; }
   .follow-up-card-actions { width: 100%; flex-wrap: wrap; }
+  .monitor-pick { grid-template-columns: 42px minmax(0, 1fr); align-items: start; }
+  .monitor-pick .follow-up-card-actions { grid-column: 2; justify-content: flex-start; }
   .follow-up-edit-form { grid-template-columns: 1fr; }
   .follow-up-results-heading { align-items: flex-start; }
 }

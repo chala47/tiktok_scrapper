@@ -167,6 +167,7 @@ export default function Monitor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyScheduleId, setBusyScheduleId] = useState<number | null>(null);
+  const [busyPickKey, setBusyPickKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -267,6 +268,31 @@ export default function Monitor() {
       setError(reason instanceof Error ? reason.message : "Could not delete the schedule.");
     } finally {
       setBusyScheduleId(null);
+    }
+  }
+
+  async function deleteScheduledPick(run: FetchRun, video: MonitoredVideo) {
+    const pickKey = `${run.id}:${video.video_id}`;
+    setBusyPickKey(pickKey);
+    setError(null);
+    setNotice(null);
+    try {
+      await request<void>(
+        `/monitor/runs/${run.id}/videos/${encodeURIComponent(video.video_id)}`,
+        { method: "DELETE" },
+      );
+      setRuns((current) => current.map((item) => item.id === run.id
+        ? {
+          ...item,
+          saved_count: Math.max(0, item.saved_count - 1),
+          videos: item.videos.filter((pick) => pick.video_id !== video.video_id),
+        }
+        : item));
+      setNotice("Scheduled pick deleted.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not delete the scheduled pick.");
+    } finally {
+      setBusyPickKey(null);
     }
   }
 
@@ -499,6 +525,22 @@ export default function Monitor() {
                             </h3>
                             {video.creator && <p className="follow-up-note">@{video.creator}</p>}
                             <p className="follow-up-due">{formatLikes(video.like_count)} likes</p>
+                          </div>
+                          <div className="follow-up-card-actions">
+                            <a
+                              className="download-button"
+                              href={`${API_BASE}/videos/download?video=${encodeURIComponent(video.video_id)}`}
+                            >
+                              Download MP4
+                            </a>
+                            <button
+                              className="small-action delete-action"
+                              type="button"
+                              disabled={busyPickKey !== null}
+                              onClick={() => void deleteScheduledPick(run, video)}
+                            >
+                              {busyPickKey === `${run.id}:${video.video_id}` ? "Deleting…" : "Delete"}
+                            </button>
                           </div>
                         </div>
                       ))}
