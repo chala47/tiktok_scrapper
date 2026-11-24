@@ -54,60 +54,66 @@ def _call_with_dns_retry(call, schedule_id, *, monotonic=time.monotonic, sleep=t
 
 
 def _fetch_window(schedule, start, end):
-    cursor = None
-    seen_cursors = set()
     videos = {}
     pages = 0
     start_date = start.date().isoformat()
     end_date = end.date().isoformat()
+    targets = (
+        follow_ups.list_profiles_in_category(schedule["target"])
+        if schedule.get("target_kind") == "category"
+        else [schedule["target"]]
+    )
 
-    while True:
-        if pages >= MAX_PAGES_PER_SCHEDULE:
-            raise RuntimeError(
-                f"fetch exceeded the {MAX_PAGES_PER_SCHEDULE}-page safety limit"
-            )
-        if schedule["entity_type"] == "hashtag":
-            page = _call_with_dns_retry(
-                lambda: discovery.get_hashtag_posts(
-                    schedule["target"],
-                    cursor=cursor,
-                    start_date=start_date,
-                    end_date=end_date,
-                ),
-                schedule["id"],
-            )
-        else:
-            page = _call_with_dns_retry(
-                lambda: users.get_posts(
-                    {"username": schedule["target"]},
-                    sort="latest",
-                    cursor=cursor,
-                    start_date=start_date,
-                    end_date=end_date,
-                ),
-                schedule["id"],
-            )
-        pages += 1
+    for target in targets:
+        cursor = None
+        seen_cursors = set()
+        while True:
+            if pages >= MAX_PAGES_PER_SCHEDULE:
+                raise RuntimeError(
+                    f"fetch exceeded the {MAX_PAGES_PER_SCHEDULE}-page safety limit"
+                )
+            if schedule["entity_type"] == "hashtag":
+                page = _call_with_dns_retry(
+                    lambda: discovery.get_hashtag_posts(
+                        target,
+                        cursor=cursor,
+                        start_date=start_date,
+                        end_date=end_date,
+                    ),
+                    schedule["id"],
+                )
+            else:
+                page = _call_with_dns_retry(
+                    lambda: users.get_posts(
+                        {"username": target},
+                        sort="latest",
+                        cursor=cursor,
+                        start_date=start_date,
+                        end_date=end_date,
+                    ),
+                    schedule["id"],
+                )
+            pages += 1
 
-        for video in page["videos"]:
-            video_id = video.get("id")
-            if not isinstance(video_id, str) or not _video_in_window(video, start, end):
-                continue
-            previous = videos.get(video_id)
-            current_likes = (video.get("stats") or {}).get("like_count")
-            previous_likes = ((previous or {}).get("stats") or {}).get("like_count")
-            if previous is None or (
-                isinstance(current_likes, int) and
-                (not isinstance(previous_likes, int) or current_likes > previous_likes)
-            ):
-                videos[video_id] = video
+            for video in page["videos"]:
+                video_id = video.get("id")
+                if not isinstance(video_id, str) or not _video_in_window(video, start, end):
+                    continue
+                previous = videos.get(video_id)
+                current_likes = (video.get("stats") or {}).get("like_count")
+                previous_likes = ((previous or {}).get("stats") or {}).get("like_count")
+                if previous is None or (
+                    isinstance(current_likes, int) and
+                    (not isinstance(previous_likes, int) or current_likes > previous_likes)
+                ):
+                    videos[video_id] = video
 
-        if not page["has_more"]:
-            break
-        cursor = page["next_cursor"]
-        if not cursor or cursor in seen_cursors:
-            raise RuntimeError("TikTok pagination returned a missing or repeated cursor")
-        seen_cursors.add(cursor)
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+            if not cursor or cursor in seen_cursors:
+                raise RuntimeError("TikTok pagination returned a missing or repeated cursor")
+            seen_cursors.add(cursor)
 
     return list(videos.values())
 

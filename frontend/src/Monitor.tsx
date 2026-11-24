@@ -4,13 +4,16 @@ import SavedFollowUpSelect from "./SavedFollowUpSelect";
 import SavedVideos from "./SavedVideos";
 
 type EntityType = "hashtag" | "profile";
-type ScheduleFrequency = "daily" | "weekly";
+type TargetKind = "single" | "category";
+type ScheduleFrequency = "daily" | "weekly" | "hourly";
 type ScheduledFetch = {
   id: number;
   entity_type: EntityType;
   target: string;
+  target_kind: TargetKind;
   weekday: number;
   frequency: ScheduleFrequency;
+  interval_hours: number | null;
   min_likes: number;
   max_videos: number;
   run_time: string;
@@ -45,13 +48,16 @@ type FetchRun = {
   error: string | null;
   entity_type: EntityType;
   target: string;
+  target_kind: TargetKind;
   videos: MonitoredVideo[];
 };
 type ScheduleForm = {
   entity_type: EntityType;
+  target_kind: TargetKind;
   target: string;
   weekday: string;
   frequency: ScheduleFrequency;
+  interval_hours: string;
   min_likes: string;
   max_videos: string;
   run_time: string;
@@ -76,8 +82,12 @@ function isSchedule(value: unknown): value is ScheduledFetch {
   return Number.isInteger(value.id) &&
     (value.entity_type === "hashtag" || value.entity_type === "profile") &&
     typeof value.target === "string" &&
+    (value.target_kind === "single" || value.target_kind === "category") &&
     Number.isInteger(value.weekday) &&
-    (value.frequency === "daily" || value.frequency === "weekly") &&
+    (value.frequency === "daily" || value.frequency === "weekly" || value.frequency === "hourly") &&
+    (value.frequency === "hourly"
+      ? typeof value.interval_hours === "number" && [1, 6, 12].includes(value.interval_hours)
+      : value.interval_hours === null) &&
     Number.isInteger(value.min_likes) &&
     Number.isInteger(value.max_videos) &&
     typeof value.run_time === "string" &&
@@ -116,6 +126,7 @@ function isFetchRun(value: unknown): value is FetchRun {
     (value.error === null || typeof value.error === "string") &&
     (value.entity_type === "hashtag" || value.entity_type === "profile") &&
     typeof value.target === "string" &&
+    (value.target_kind === "single" || value.target_kind === "category") &&
     Array.isArray(value.videos) &&
     value.videos.every(isMonitoredVideo);
 }
@@ -156,9 +167,11 @@ export default function Monitor() {
   const [runs, setRuns] = useState<FetchRun[]>([]);
   const [form, setForm] = useState<ScheduleForm>({
     entity_type: "hashtag",
+    target_kind: "single",
     target: "",
     weekday: String((new Date().getDay() + 6) % 7),
     frequency: "weekly",
+    interval_hours: "1",
     min_likes: "0",
     max_videos: "2",
     run_time: "09:00",
@@ -200,9 +213,14 @@ export default function Monitor() {
 
   async function createSchedule(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const target = form.target.trim().replace(form.entity_type === "hashtag" ? /^#+/ : /^@/, "");
+    const rawTarget = form.target.trim();
+    const target = form.entity_type === "hashtag"
+      ? rawTarget.replace(/^#+/, "")
+      : form.target_kind === "single" ? rawTarget.replace(/^@/, "") : rawTarget;
     if (!target) {
-      setError(`Enter a ${form.entity_type === "hashtag" ? "hashtag" : "profile username"}.`);
+      setError(`Choose a ${form.entity_type === "hashtag"
+        ? "hashtag"
+        : form.target_kind === "category" ? "profile category" : "profile username"}.`);
       return;
     }
     setSaving(true);
@@ -219,6 +237,7 @@ export default function Monitor() {
           min_likes: Number(form.min_likes),
           max_videos: Number(form.max_videos),
           timezone: TIMEZONE,
+          interval_hours: form.frequency === "hourly" ? Number(form.interval_hours) : null,
         }),
       });
       if (!isSchedule(created)) throw new Error("The API returned an unexpected schedule response.");
@@ -253,7 +272,10 @@ export default function Monitor() {
   }
 
   async function deleteSchedule(schedule: ScheduledFetch) {
-    if (!window.confirm(`Delete the schedule for ${schedule.entity_type === "hashtag" ? "#" : "@"}${schedule.target}? Its run history will also be deleted.`)) {
+    const targetLabel = schedule.entity_type === "hashtag"
+      ? `#${schedule.target}`
+      : schedule.target_kind === "category" ? `category “${schedule.target}”` : `@${schedule.target}`;
+    if (!window.confirm(`Delete the schedule for ${targetLabel}? Its run history will also be deleted.`)) {
       return;
     }
     setBusyScheduleId(schedule.id);
@@ -296,13 +318,15 @@ export default function Monitor() {
     }
   }
 
+  const savedRuns = runs.filter((run) => run.saved_count > 0);
+
   return (
     <div className="follow-ups-page monitor-page">
       <section className="intro follow-ups-intro">
         <p className="eyebrow">AUTOMATED VIDEO PICKS</p>
         <h1>Monitor</h1>
         <p className="intro-copy">
-          Fetch recent hashtag or profile videos daily or weekly and keep your most-liked picks from each run.
+          Fetch recent hashtag, profile, or saved profile-category videos daily or weekly and keep the most-liked picks from each run.
         </p>
       </section>
 
@@ -318,44 +342,77 @@ export default function Monitor() {
             <label className="field">
               <span>Type</span>
               <select
-                value={form.entity_type}
-                onChange={(event) => setForm((current) => ({
-                  ...current,
-                  entity_type: event.target.value as EntityType,
-                  target: "",
-                }))}
+                value={form.entity_type === "hashtag"
+                  ? "hashtag"
+                  : form.target_kind === "category" ? "profile_category" : "profile"}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setForm((current) => ({
+                    ...current,
+                    entity_type: value === "hashtag" ? "hashtag" : "profile",
+                    target_kind: value === "profile_category" ? "category" : "single",
+                    target: "",
+                  }));
+                }}
               >
                 <option value="hashtag">Hashtag</option>
                 <option value="profile">Profile</option>
+                <option value="profile_category">Profile category</option>
               </select>
             </label>
             <label className="field">
-              <span>{form.entity_type === "hashtag" ? "Hashtag" : "Username"}</span>
-              <div className="monitor-target-control">
+              <span>{form.entity_type === "hashtag"
+                ? "Hashtag"
+                : form.target_kind === "category" ? "Profile category" : "Username"}</span>
+              {form.target_kind === "category" ? (
                 <SavedFollowUpSelect
-                  entityType={form.entity_type}
+                  entityType="profile"
+                  categoryOnly
                   compact
+                  value={form.target}
                   onSelect={(target) => setForm((current) => ({ ...current, target }))}
                 />
-                <input
-                  value={form.target}
-                  onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
-                  placeholder={form.entity_type === "hashtag" ? "dance" : "creator"}
-                  required
-                />
-              </div>
+              ) : (
+                <div className="monitor-target-control">
+                  <SavedFollowUpSelect
+                    entityType={form.entity_type}
+                    compact
+                    onSelect={(target) => setForm((current) => ({ ...current, target }))}
+                  />
+                  <input
+                    value={form.target}
+                    onChange={(event) => setForm((current) => ({ ...current, target: event.target.value }))}
+                    placeholder={form.entity_type === "hashtag" ? "dance" : "creator"}
+                    required
+                  />
+                </div>
+              )}
             </label>
             <label className="field">
               <span>Repeat</span>
               <select
-                value={form.frequency}
-                onChange={(event) => setForm((current) => ({
-                  ...current,
-                  frequency: event.target.value as ScheduleFrequency,
-                }))}
+                value={form.frequency === "hourly" ? `hourly-${form.interval_hours}` : form.frequency}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value.startsWith("hourly-")) {
+                    setForm((current) => ({
+                      ...current,
+                      frequency: "hourly",
+                      interval_hours: value.slice("hourly-".length),
+                    }));
+                  } else {
+                    setForm((current) => ({
+                      ...current,
+                      frequency: value as ScheduleFrequency,
+                    }));
+                  }
+                }}
               >
                 <option value="daily">Every day</option>
                 <option value="weekly">Every week</option>
+                <option value="hourly-1">Every hour</option>
+                <option value="hourly-6">Every 6 hours</option>
+                <option value="hourly-12">Every 12 hours</option>
               </select>
             </label>
             {form.frequency === "weekly" && <label className="field">
@@ -414,6 +471,7 @@ export default function Monitor() {
           </div>
           <p className="endpoint-description">
             Each run scans from the selected start date, then from the previous successful run, and saves up to the selected number of videos.
+            Profile-category schedules scan every saved profile in that category together.
           </p>
         </form>
       </section>
@@ -441,12 +499,18 @@ export default function Monitor() {
             {schedules.map((schedule) => (
               <article className={`follow-up-card monitor-schedule-card${schedule.enabled ? "" : " is-done"}`} key={schedule.id}>
                 <div className="follow-up-card-main">
-                  <span className={`entity-badge ${schedule.entity_type}`}>
-                    {schedule.entity_type === "hashtag" ? "#" : "@"} {schedule.entity_type}
+                  <span className={`entity-badge ${schedule.target_kind === "category" ? "profile-category" : schedule.entity_type}`}>
+                    {schedule.entity_type === "hashtag"
+                      ? "# hashtag"
+                      : schedule.target_kind === "category" ? "profile category" : "@ profile"}
                   </span>
-                  <h3>{schedule.entity_type === "hashtag" ? "#" : "@"}{schedule.target}</h3>
+                  <h3>{schedule.entity_type === "hashtag"
+                    ? `#${schedule.target}`
+                    : schedule.target_kind === "category" ? schedule.target : `@${schedule.target}`}</h3>
                   <p className="follow-up-note">
-                    {schedule.frequency === "daily"
+                    {schedule.frequency === "hourly"
+                      ? `Every ${schedule.interval_hours} ${schedule.interval_hours === 1 ? "hour" : "hours"}, starting at ${schedule.run_time}`
+                      : schedule.frequency === "daily"
                       ? `Every day at ${schedule.run_time}`
                       : `Every ${WEEKDAYS[schedule.weekday]} at ${schedule.run_time}`} ({schedule.timezone})
                   </p>
@@ -481,27 +545,34 @@ export default function Monitor() {
         ) : (
           <div className="follow-up-empty">
             <strong>No schedules yet</strong>
-            <span>Add a hashtag or profile above to start collecting video picks.</span>
+            <span>Add a hashtag, profile, or profile category above to start collecting video picks.</span>
           </div>
         )}
       </section>
 
-      <section className="results-section follow-up-results">
-        <div className="results-heading follow-up-results-heading">
-          <div>
-            <p className="eyebrow">MOST LIKED IN EACH WINDOW</p>
-            <h2>Scheduled picks</h2>
+      {savedRuns.length > 0 && (
+        <section className="results-section follow-up-results">
+          <div className="results-heading follow-up-results-heading">
+            <div>
+              <p className="eyebrow">MOST LIKED IN EACH WINDOW</p>
+              <h2>Scheduled picks</h2>
+            </div>
+            <span className="result-count">Latest {savedRuns.length} runs</span>
           </div>
-          <span className="result-count">Latest {runs.length} runs</span>
-        </div>
-        {runs.length ? (
           <div className="follow-up-list">
-            {runs.map((run) => (
+            {savedRuns.map((run) => (
               <article className="follow-up-card monitor-run-card" key={run.id}>
                 <div className="follow-up-card-main">
-                  <span className={`entity-badge ${run.entity_type}`}>
-                    {run.entity_type === "hashtag" ? "#" : "@"} {run.target}
+                  <span className={`entity-badge ${run.target_kind === "category" ? "profile-category" : run.entity_type}`}>
+                    {run.entity_type === "hashtag"
+                      ? "# hashtag"
+                      : run.target_kind === "category" ? "profile category" : "@ profile"}
                   </span>
+                  <p className="follow-up-note">
+                    {run.entity_type === "hashtag"
+                      ? `#${run.target}`
+                      : run.target_kind === "category" ? `Category: ${run.target}` : `@${run.target}`}
+                  </p>
                   <h3>{localDateTime(run.started_at)}</h3>
                   <p className="follow-up-note">
                     {run.status === "succeeded"
@@ -550,13 +621,8 @@ export default function Monitor() {
               </article>
             ))}
           </div>
-        ) : (
-          <div className="follow-up-empty">
-            <strong>No scheduled runs yet</strong>
-            <span>Results will appear after a schedule runs.</span>
-          </div>
-        )}
-      </section>
+        </section>
+      )}
 
       <SavedVideos />
       <footer>Scheduled fetching runs while the scraper server is running. Manual bookmarks remain available below.</footer>

@@ -18,8 +18,8 @@ _SAVED_VIDEO_FIELDS = {
     "video_id", "hashtag", "link", "description", "cover", "creator", "posted_at",
 }
 _FETCH_SCHEDULE_FIELDS = {
-    "entity_type", "target", "weekday", "run_time", "timezone", "start_date",
-    "frequency", "min_likes", "max_videos",
+    "entity_type", "target", "target_kind", "weekday", "run_time", "timezone",
+    "start_date", "frequency", "min_likes", "max_videos", "interval_hours",
 }
 MAX_SCHEDULED_VIDEOS = 100
 
@@ -79,10 +79,12 @@ def _database():
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     entity_type TEXT NOT NULL CHECK (entity_type IN ('hashtag', 'profile')),
                     target TEXT NOT NULL,
+                    target_kind TEXT NOT NULL DEFAULT 'single' CHECK (target_kind IN ('single', 'category')),
                     weekday INTEGER NOT NULL CHECK (weekday BETWEEN 0 AND 6),
                     frequency TEXT NOT NULL DEFAULT 'weekly' CHECK (frequency IN ('daily', 'weekly')),
                     min_likes INTEGER NOT NULL DEFAULT 0 CHECK (min_likes >= 0),
                     max_videos INTEGER NOT NULL DEFAULT 2 CHECK (max_videos BETWEEN 1 AND 100),
+                    interval_hours INTEGER,
                     run_time TEXT NOT NULL,
                     timezone TEXT NOT NULL,
                     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
@@ -109,6 +111,14 @@ def _database():
             if "max_videos" not in schedule_columns:
                 connection.execute(
                     "ALTER TABLE fetch_schedules ADD COLUMN max_videos INTEGER NOT NULL DEFAULT 2"
+                )
+            if "target_kind" not in schedule_columns:
+                connection.execute(
+                    "ALTER TABLE fetch_schedules ADD COLUMN target_kind TEXT NOT NULL DEFAULT 'single'"
+                )
+            if "interval_hours" not in schedule_columns:
+                connection.execute(
+                    "ALTER TABLE fetch_schedules ADD COLUMN interval_hours INTEGER"
                 )
             connection.execute(
                 """
@@ -196,9 +206,27 @@ def _schedule_weekday(value):
     return value
 
 
+def _schedule_target_kind(value, entity_type):
+    if not isinstance(value, str) or value not in {"single", "category"}:
+        raise ValueError("target_kind must be 'single' or 'category'")
+    if value == "category" and entity_type != "profile":
+        raise ValueError("category schedules are only supported for profiles")
+    return value
+
+
 def _schedule_frequency(value):
-    if not isinstance(value, str) or value not in {"daily", "weekly"}:
-        raise ValueError("frequency must be 'daily' or 'weekly'")
+    if not isinstance(value, str) or value not in {"daily", "weekly", "hourly"}:
+        raise ValueError("frequency must be 'daily', 'weekly', or 'hourly'")
+    return value
+
+
+def _schedule_interval_hours(value, frequency):
+    if frequency != "hourly":
+        if value is not None:
+            raise ValueError("interval_hours is only supported for hourly schedules")
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value not in {1, 6, 12}:
+        raise ValueError("interval_hours must be 1, 6, or 12 for hourly schedules")
     return value
 
 
@@ -237,10 +265,24 @@ def _parse_schedule_start(value):
     return parsed.astimezone(timezone.utc)
 
 
-def _next_schedule_run(after, frequency, weekday, run_time, zone, not_before=None):
+def _next_schedule_run(after, frequency, weekday, run_time, zone, not_before=None,
+                       interval_hours=None):
     not_before = not_before or after
     local_after = after.astimezone(zone)
     local_not_before = not_before.astimezone(zone)
+    if frequency == "hourly":
+        if interval_hours not in {1, 6, 12}:
+            raise ValueError("hourly schedules require an interval of 1, 6, or 12 hours")
+        anchor = datetime.combine(
+            local_not_before.date(), run_time, tzinfo=zone,
+        ).astimezone(timezone.utc)
+        if anchor < not_before:
+            anchor += timedelta(hours=interval_hours)
+        if anchor <= after:
+            elapsed = after - anchor
+            intervals = int(elapsed.total_seconds() // (interval_hours * 3600)) + 1
+            anchor += timedelta(hours=intervals * interval_hours)
+        return _utc_iso(anchor)
     first_day = max(local_after.date(), local_not_before.date())
     for offset in range(15):
         candidate_date = first_day + timedelta(days=offset)
@@ -316,6 +358,8 @@ def _schedule_record(row):
     record = _record(row)
     if record is not None:
         record["enabled"] = bool(record["enabled"])
+        if record.get("interval_hours") is not None:
+            record["frequency"] = "hourly"
     return record
 
 
@@ -337,11 +381,28 @@ def list_follow_ups(entity_type=None, status=None):
     return [_record(row) for row in rows]
 
 
+def list_profiles_in_category(category):
+    if not isinstance(category, str) or not category.strip():
+        raise ValueError("category must be a non-empty string")
+    with _database() as connection:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT target FROM follow_ups
+            WHERE entity_type = 'profile' AND category = ?
+            ORDER BY target
+            """,
+            (category.strip(),),
+        ).fetchall()
+    return [row["target"] for row in rows]
+
+
 def create_fetch_schedule(data):
     if not isinstance(data, dict):
         raise ValueError("JSON request body must be an object")
     unknown = set(data) - _FETCH_SCHEDULE_FIELDS
-    required = _FETCH_SCHEDULE_FIELDS - {"frequency", "min_likes", "max_videos"}
+    required = _FETCH_SCHEDULE_FIELDS - {
+        "target_kind", "frequency", "min_likes", "max_videos", "interval_hours",
+    }
     missing = required - set(data)
     if unknown:
         raise ValueError(f"unsupported fields: {', '.join(sorted(unknown))}")
@@ -349,28 +410,41 @@ def create_fetch_schedule(data):
         raise ValueError(f"missing fields: {', '.join(sorted(missing))}")
 
     entity_type = _entity_type(data["entity_type"])
-    target = _target(data["target"], entity_type)
+    target_kind = _schedule_target_kind(data.get("target_kind", "single"), entity_type)
+    if target_kind == "category":
+        target = _optional_text(data, "target")
+        if not target:
+            raise ValueError("target must be a non-empty string")
+    else:
+        target = _target(data["target"], entity_type)
     weekday = _schedule_weekday(data["weekday"])
     frequency = _schedule_frequency(data.get("frequency", "weekly"))
+    interval_hours = _schedule_interval_hours(data.get("interval_hours"), frequency)
     min_likes = _schedule_min_likes(data.get("min_likes", 0))
     max_videos = _schedule_max_videos(data.get("max_videos", 2))
     run_time = _schedule_time(data["run_time"])
     timezone_name, zone = _timezone(data["timezone"])
     window_start = _schedule_start(data["start_date"], zone)
     now = datetime.now(timezone.utc)
-    next_run = _next_schedule_run(now, frequency, weekday, run_time, zone, window_start)
+    # Keep the existing SQLite frequency constraint; interval_hours marks hourly schedules.
+    stored_frequency = "daily" if frequency == "hourly" else frequency
+    next_run = _next_schedule_run(
+        now, frequency, weekday, run_time, zone, window_start, interval_hours,
+    )
     timestamp = _timestamp()
 
     with _database() as connection:
         cursor = connection.execute(
             """
             INSERT INTO fetch_schedules
-                (entity_type, target, weekday, frequency, min_likes, max_videos, run_time,
+                (entity_type, target, target_kind, weekday, frequency, min_likes, max_videos,
+                 interval_hours, run_time,
                  timezone, enabled, window_start_at, next_run_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
             """,
             (
-                entity_type, target, weekday, frequency, min_likes, max_videos,
+                entity_type, target, target_kind, weekday, stored_frequency, min_likes,
+                max_videos, interval_hours,
                 run_time.strftime("%H:%M"),
                 timezone_name, _utc_iso(window_start), next_run, timestamp, timestamp,
             ),
@@ -409,13 +483,15 @@ def update_fetch_schedule(schedule_id, data):
         now = datetime.now(timezone.utc)
         next_run = row["next_run_at"]
         if enabled:
+            frequency = "hourly" if row["interval_hours"] is not None else row["frequency"]
             next_run = _next_schedule_run(
                 now,
-                row["frequency"],
+                frequency,
                 row["weekday"],
                 _schedule_time(row["run_time"]),
                 _timezone(row["timezone"])[1],
                 _parse_schedule_start(row["window_start_at"]),
+                row["interval_hours"],
             )
         connection.execute(
             """
@@ -467,10 +543,12 @@ def claim_due_fetch_schedules(now=None):
             )
             next_run = _next_schedule_run(
                 now,
-                row["frequency"],
+                "hourly" if row["interval_hours"] is not None else row["frequency"],
                 row["weekday"],
                 _schedule_time(row["run_time"]),
                 _timezone(row["timezone"])[1],
+                _parse_schedule_start(row["window_start_at"]),
+                interval_hours=row["interval_hours"],
             )
             connection.execute(
                 "UPDATE fetch_schedules SET next_run_at = ?, updated_at = ? WHERE id = ?",
@@ -567,7 +645,7 @@ def list_fetch_runs(limit=100):
     with _database() as connection:
         runs = connection.execute(
             """
-            SELECT r.*, s.entity_type, s.target
+            SELECT r.*, s.entity_type, s.target, s.target_kind
             FROM fetch_runs AS r
             JOIN fetch_schedules AS s ON s.id = r.schedule_id
             ORDER BY r.started_at DESC, r.id DESC

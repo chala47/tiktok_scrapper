@@ -83,6 +83,8 @@ export default function SavedVideos() {
     }
   }
 
+  if (!videos.length && !error) return null;
+
   return (
     <section className="results-section saved-videos-section" aria-live="polite">
       <div className="results-heading follow-up-results-heading">
@@ -141,12 +143,7 @@ export default function SavedVideos() {
             </article>
           ))}
         </div>
-      ) : (
-        <div className="follow-up-empty">
-          <strong>No videos saved yet</strong>
-          <span>Save a video from hashtag search to revisit it here.</span>
-        </div>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -21,10 +21,14 @@ export default function SavedFollowUpSelect({
   entityType,
   onSelect,
   compact = false,
+  categoryOnly = false,
+  value,
 }: {
   entityType: EntityType;
   onSelect: (target: string) => void;
   compact?: boolean;
+  categoryOnly?: boolean;
+  value?: string;
 }) {
   const [targets, setTargets] = useState<SavedFollowUp[]>([]);
   const [selection, setSelection] = useState("");
@@ -72,7 +76,15 @@ export default function SavedFollowUpSelect({
     return () => controller.abort();
   }, [entityType]);
 
-  const title = entityType === "hashtag" ? "hashtag" : "profile";
+  useEffect(() => {
+    setSelection("");
+  }, [entityType, categoryOnly]);
+
+  const title = categoryOnly ? "profile category" : entityType === "hashtag" ? "hashtag" : "profile";
+  const categories = entityType === "profile"
+    ? [...new Set(targets.map((item) => item.category?.trim()).filter((category): category is string => !!category))]
+      .sort((left, right) => left.localeCompare(right))
+    : [];
   const profileGroups = entityType === "profile"
     ? [...targets.reduce((groups, item) => {
       const category = item.category?.trim() || "Uncategorized";
@@ -86,18 +98,25 @@ export default function SavedFollowUpSelect({
   const select = (
     <select
       aria-label={`Choose saved ${title}`}
-      value={selection}
-      disabled={loading || targets.length === 0}
+      value={value ?? selection}
+      disabled={loading || (categoryOnly ? categories.length === 0 : targets.length === 0)}
+      required={categoryOnly}
       onChange={(event) => {
         const target = event.target.value;
-        setSelection("");
+        if (value === undefined) setSelection(categoryOnly ? target : "");
         if (target) onSelect(target);
       }}
     >
       <option value="">
-        {loading ? "Loading saved items…" : targets.length ? `Select a saved ${title}…` : `No saved ${title}s`}
+        {loading
+          ? "Loading saved items…"
+          : categoryOnly
+            ? categories.length ? "Select a saved profile category…" : "No saved profile categories"
+            : targets.length ? `Select a saved ${title}…` : `No saved ${title}s`}
       </option>
-      {entityType === "profile"
+      {categoryOnly
+        ? categories.map((category) => <option value={category} key={category}>{category}</option>)
+        : entityType === "profile"
         ? profileGroups.map(([category, usernames]) => (
           <optgroup label={category} key={category}>
             {[...usernames].sort((left, right) => left.localeCompare(right)).map((target) => (

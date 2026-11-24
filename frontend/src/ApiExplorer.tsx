@@ -657,13 +657,24 @@ export default function ApiExplorer({ group }: { group: ApiGroup }) {
                           ) : header}
                         </th>
                       );
-                    })}{isUserVideosTable && <th>SAVE</th>}</tr>
+                    })}{isUserVideosTable && <><th>DOWNLOAD</th><th>SAVE</th></>}</tr>
                   </thead>
                   <tbody>
                     {tableRows.length ? tableRows.map((row, index) => (
                       <tr key={isObject(row) ? String(row.id ?? row.username ?? index) : `${key}-${index}`}>
                         {tableColumns.map((column) => <td key={column} className={column === "stats.like_count" || column === "stats.play_count" ? "numeric" : undefined}>{renderCell(row, column, isUserVideosTable)}</td>)}
                         {isUserVideosTable && (
+                          <>
+                          <td>
+                            {isObject(row) && typeof row.id === "string" ? (
+                              <a
+                                className="download-button"
+                                href={`${API_BASE}/videos/download?video=${encodeURIComponent(row.id)}`}
+                              >
+                                Download MP4
+                              </a>
+                            ) : "—"}
+                          </td>
                           <td>
                             <button
                               className={`small-action${isObject(row) && typeof row.id === "string" && savedVideoIds.has(row.id) ? " primary-action" : ""}`}
@@ -679,10 +690,11 @@ export default function ApiExplorer({ group }: { group: ApiGroup }) {
                                   : "Save"}
                             </button>
                           </td>
+                          </>
                         )}
                       </tr>
                     )) : (
-                      <tr><td className="empty-state" colSpan={Math.max(tableColumns.length + (isUserVideosTable ? 1 : 0), 1)}>No results returned.</td></tr>
+                      <tr><td className="empty-state" colSpan={Math.max(tableColumns.length + (isUserVideosTable ? 2 : 0), 1)}>No results returned.</td></tr>
                     )}
                   </tbody>
                 </table>

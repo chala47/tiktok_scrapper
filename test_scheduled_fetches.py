@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -27,6 +27,7 @@ def test_schedule_create_pause_resume_and_delete(database):
     schedule = follow_ups.create_fetch_schedule(schedule_payload())
 
     assert schedule["target"] == "creator"
+    assert schedule["target_kind"] == "single"
     assert schedule["enabled"] is True
     assert datetime.fromisoformat(schedule["next_run_at"]) > datetime.now(timezone.utc)
     assert schedule["window_start_at"].startswith("2026-01-01")
@@ -38,6 +39,68 @@ def test_schedule_create_pause_resume_and_delete(database):
 
     assert follow_ups.delete_fetch_schedule(schedule["id"])
     assert follow_ups.list_fetch_schedules() == []
+
+
+def test_category_schedule_scans_every_saved_profile_in_that_category(database, monkeypatch):
+    follow_ups.create_follow_up({
+        "entity_type": "profile",
+        "target": "@creator-one",
+        "category": "Sports",
+        "status": "done",
+    })
+    follow_ups.create_follow_up({
+        "entity_type": "profile",
+        "target": "creator-two",
+        "category": "Sports",
+    })
+    follow_ups.create_follow_up({
+        "entity_type": "profile",
+        "target": "other-category",
+        "category": "Food",
+    })
+    schedule = follow_ups.create_fetch_schedule({
+        **schedule_payload(),
+        "target": "Sports",
+        "target_kind": "category",
+    })
+    calls = []
+
+    def fake_fetch(profile, **kwargs):
+        calls.append(profile["username"])
+        return {
+            "videos": [{
+                "id": f"video-{profile['username']}",
+                "created_at": "2026-01-03T00:00:00Z",
+                "stats": {"like_count": 100},
+            }],
+            "has_more": False,
+            "next_cursor": None,
+        }
+
+    monkeypatch.setattr(scheduled_fetcher.users, "get_posts", fake_fetch)
+
+    candidates = scheduled_fetcher._fetch_window(
+        schedule,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 5, tzinfo=timezone.utc),
+    )
+
+    assert schedule["target_kind"] == "category"
+    assert calls == ["creator-one", "creator-two"]
+    assert {video["id"] for video in candidates} == {
+        "video-creator-one",
+        "video-creator-two",
+    }
+
+
+def test_category_schedules_are_only_valid_for_profiles(database):
+    with pytest.raises(ValueError, match="only supported for profiles"):
+        follow_ups.create_fetch_schedule({
+            **schedule_payload(),
+            "entity_type": "hashtag",
+            "target": "sports",
+            "target_kind": "category",
+        })
 
 
 @pytest.mark.parametrize(
@@ -140,6 +203,43 @@ def test_daily_schedule_advances_to_the_next_day(database):
     assert len(claimed) == 1
     refreshed = follow_ups.list_fetch_schedules()[0]
     assert refreshed["next_run_at"] == "2026-01-08T09:30:00+00:00"
+
+
+@pytest.mark.parametrize("interval_hours", [1, 6, 12])
+def test_hourly_schedule_keeps_interval_from_first_run_time(database, interval_hours):
+    schedule = follow_ups.create_fetch_schedule({
+        **schedule_payload(),
+        "frequency": "hourly",
+        "interval_hours": interval_hours,
+    })
+    assert schedule["frequency"] == "hourly"
+    assert schedule["interval_hours"] == interval_hours
+
+    with follow_ups._database() as connection:
+        connection.execute(
+            "UPDATE fetch_schedules SET next_run_at = ? WHERE id = ?",
+            ("2026-01-01T09:30:00+00:00", schedule["id"]),
+        )
+
+    claimed = follow_ups.claim_due_fetch_schedules(
+        datetime(2026, 1, 1, 16, 0, tzinfo=timezone.utc)
+    )
+
+    assert len(claimed) == 1
+    expected_next_run = datetime(2026, 1, 1, 9, 30, tzinfo=timezone.utc)
+    while expected_next_run <= datetime(2026, 1, 1, 16, 0, tzinfo=timezone.utc):
+        expected_next_run += timedelta(hours=interval_hours)
+    assert follow_ups.list_fetch_schedules()[0]["next_run_at"] == expected_next_run.isoformat()
+
+
+@pytest.mark.parametrize("interval_hours", [0, 2, 24, True])
+def test_hourly_schedule_rejects_unsupported_intervals(database, interval_hours):
+    with pytest.raises(ValueError, match="interval_hours must be 1, 6, or 12"):
+        follow_ups.create_fetch_schedule({
+            **schedule_payload(),
+            "frequency": "hourly",
+            "interval_hours": interval_hours,
+        })
 
 
 def test_fetch_window_pages_filters_exact_window_and_ranks_likes(monkeypatch):
