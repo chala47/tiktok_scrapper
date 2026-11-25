@@ -5,7 +5,7 @@ import time
 
 import follow_ups
 from tiktok import discovery, users
-from tiktok.fetch import TikTokUpstreamError
+from tiktok.fetch import TikTokNotFound, TikTokUpstreamError
 
 POLL_SECONDS = 30
 MAX_PAGES_PER_SCHEDULE = 1000
@@ -65,55 +65,74 @@ def _fetch_window(schedule, start, end):
     )
 
     for target in targets:
-        cursor = None
-        seen_cursors = set()
-        while True:
-            if pages >= MAX_PAGES_PER_SCHEDULE:
-                raise RuntimeError(
-                    f"fetch exceeded the {MAX_PAGES_PER_SCHEDULE}-page safety limit"
-                )
-            if schedule["entity_type"] == "hashtag":
-                page = _call_with_dns_retry(
-                    lambda: discovery.get_hashtag_posts(
-                        target,
-                        cursor=cursor,
-                        start_date=start_date,
-                        end_date=end_date,
-                    ),
-                    schedule["id"],
-                )
-            else:
-                page = _call_with_dns_retry(
-                    lambda: users.get_posts(
-                        {"username": target},
-                        sort="latest",
-                        cursor=cursor,
-                        start_date=start_date,
-                        end_date=end_date,
-                    ),
-                    schedule["id"],
-                )
-            pages += 1
+        target_videos = {}
+        try:
+            cursor = None
+            seen_cursors = set()
+            while True:
+                if pages >= MAX_PAGES_PER_SCHEDULE:
+                    raise RuntimeError(
+                        f"fetch exceeded the {MAX_PAGES_PER_SCHEDULE}-page safety limit"
+                    )
+                if schedule["entity_type"] == "hashtag":
+                    page = _call_with_dns_retry(
+                        lambda: discovery.get_hashtag_posts(
+                            target,
+                            cursor=cursor,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
+                        schedule["id"],
+                    )
+                else:
+                    page = _call_with_dns_retry(
+                        lambda: users.get_posts(
+                            {"username": target},
+                            sort="latest",
+                            cursor=cursor,
+                            start_date=start_date,
+                            end_date=end_date,
+                        ),
+                        schedule["id"],
+                    )
+                pages += 1
 
-            for video in page["videos"]:
-                video_id = video.get("id")
-                if not isinstance(video_id, str) or not _video_in_window(video, start, end):
-                    continue
-                previous = videos.get(video_id)
-                current_likes = (video.get("stats") or {}).get("like_count")
-                previous_likes = ((previous or {}).get("stats") or {}).get("like_count")
-                if previous is None or (
-                    isinstance(current_likes, int) and
-                    (not isinstance(previous_likes, int) or current_likes > previous_likes)
-                ):
-                    videos[video_id] = video
+                for video in page["videos"]:
+                    video_id = video.get("id")
+                    if not isinstance(video_id, str) or not _video_in_window(video, start, end):
+                        continue
+                    previous = target_videos.get(video_id)
+                    current_likes = (video.get("stats") or {}).get("like_count")
+                    previous_likes = ((previous or {}).get("stats") or {}).get("like_count")
+                    if previous is None or (
+                        isinstance(current_likes, int) and
+                        (not isinstance(previous_likes, int) or current_likes > previous_likes)
+                    ):
+                        target_videos[video_id] = video
 
-            if not page["has_more"]:
-                break
-            cursor = page["next_cursor"]
-            if not cursor or cursor in seen_cursors:
-                raise RuntimeError("TikTok pagination returned a missing or repeated cursor")
-            seen_cursors.add(cursor)
+                if not page["has_more"]:
+                    break
+                cursor = page["next_cursor"]
+                if not cursor or cursor in seen_cursors:
+                    raise RuntimeError("TikTok pagination returned a missing or repeated cursor")
+                seen_cursors.add(cursor)
+        except TikTokNotFound:
+            if schedule.get("target_kind") != "category":
+                raise
+            print(
+                f"Scheduled fetch {schedule['id']} skipped missing profile @{target}."
+            )
+            continue
+
+        for video_id, video in target_videos.items():
+            previous = videos.get(video_id)
+            current_likes = (video.get("stats") or {}).get("like_count")
+            previous_likes = ((previous or {}).get("stats") or {}).get("like_count")
+            if previous is None or (
+                isinstance(current_likes, int) and
+                (not isinstance(previous_likes, int) or current_likes > previous_likes)
+            ):
+                videos[video_id] = video
 
     return list(videos.values())
 

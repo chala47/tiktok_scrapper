@@ -93,6 +93,65 @@ def test_category_schedule_scans_every_saved_profile_in_that_category(database, 
     }
 
 
+def test_category_schedule_skips_profiles_that_are_not_found(database, monkeypatch):
+    follow_ups.create_follow_up({
+        "entity_type": "profile",
+        "target": "missing-user",
+        "category": "Sports",
+    })
+    follow_ups.create_follow_up({
+        "entity_type": "profile",
+        "target": "working-user",
+        "category": "Sports",
+    })
+    schedule = follow_ups.create_fetch_schedule({
+        **schedule_payload(),
+        "target": "Sports",
+        "target_kind": "category",
+    })
+    calls = []
+
+    def fake_fetch(profile, **kwargs):
+        username = profile["username"]
+        calls.append(username)
+        if username == "missing-user":
+            raise scheduled_fetcher.TikTokNotFound("user @missing-user not found")
+        return {
+            "videos": [{
+                "id": "working-video",
+                "created_at": "2026-01-03T00:00:00Z",
+                "stats": {"like_count": 100},
+            }],
+            "has_more": False,
+            "next_cursor": None,
+        }
+
+    monkeypatch.setattr(scheduled_fetcher.users, "get_posts", fake_fetch)
+
+    candidates = scheduled_fetcher._fetch_window(
+        schedule,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        datetime(2026, 1, 5, tzinfo=timezone.utc),
+    )
+
+    assert calls == ["missing-user", "working-user"]
+    assert [video["id"] for video in candidates] == ["working-video"]
+
+
+def test_single_profile_schedule_still_fails_if_profile_is_not_found(monkeypatch):
+    def fake_fetch(*args, **kwargs):
+        raise scheduled_fetcher.TikTokNotFound("user @missing-user not found")
+
+    monkeypatch.setattr(scheduled_fetcher.users, "get_posts", fake_fetch)
+
+    with pytest.raises(scheduled_fetcher.TikTokNotFound, match="missing-user"):
+        scheduled_fetcher._fetch_window(
+            {"id": 1, "entity_type": "profile", "target": "missing-user"},
+            datetime(2026, 1, 1, tzinfo=timezone.utc),
+            datetime(2026, 1, 5, tzinfo=timezone.utc),
+        )
+
+
 def test_category_schedules_are_only_valid_for_profiles(database):
     with pytest.raises(ValueError, match="only supported for profiles"):
         follow_ups.create_fetch_schedule({
